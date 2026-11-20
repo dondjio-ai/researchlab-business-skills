@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: researchlab-secure
+    runtime: node
+    plan: free
+    region: frankfurt
+    rootDir: secure
+    buildCommand: npm install --omit=dev
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: researchlab-sync-db
+          property: connectionString
+      - key: SETUP_TOKEN
+        sync: false
+databases:
+  - name: researchlab-sync-db
+    databaseName: researchlab_sync_db
+    user: researchlab_sync_db_user
+    plan: free
+    region: frankfurt
