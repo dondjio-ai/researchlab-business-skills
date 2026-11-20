@@ -16,7 +16,7 @@ document.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',(
 ['login','register','setup'].forEach(name=>el(name+'Form').addEventListener('submit',e=>{e.preventDefault();act(async()=>{const data=await api('/'+name,'POST',formdata(e.target));user=data.user;e.target.reset();await enter()})}));
 el('logout').addEventListener('click',()=>act(async()=>{if(user.role==='student')await saveDraft();await api('/logout','POST');location.reload()}));
 async function boot(){try{const r=await api('/me');user=r.user;await enter()}catch{const cfg=await api('/config');show('setupTab',!cfg.initialized);authPage(cfg.initialized?'login':'setup')}}
-async function enter(){show('auth',false);show('app');show('logout');el('who').textContent=user.full_name+' · '+user.role;show('studentView',user.role==='student');show('teacherView',user.role==='lecturer');el('sideLabel').textContent=user.role==='lecturer'?'LECTURER WORKSPACE':'YOUR RESEARCH GROUP';await refresh()}
+async function enter(){show('auth',false);show('app');show('logout');el('who').textContent=user.full_name+' · '+user.role;show('studentView',user.role==='student');show('teacherView',user.role==='lecturer');el('sideLabel').textContent=user.role==='lecturer'?'LECTURER WORKSPACE':'YOUR RESEARCH GROUP';await refresh();if(user.role==='student')await loadCoachStatus()}
 async function refresh(){const d=await api('/groups');groups=d.groups;selected=groups.find(x=>x.id===selected?.id)||groups[0];el('sideTitle').textContent=user.role==='lecturer'?'Classes and groups':(selected?.name||'My group');el('sideDetail').textContent=user.role==='lecturer'?(groups.length+' research groups'):(selected?.class_name||'');nav();if(user.role==='lecturer')await dashboard();else if(selected)await openGroup(selected.id)}
 function nav(){const box=el('groupNavigation');box.replaceChildren();if(user.role==='student'){chapters.forEach((c,i)=>{const b=document.createElement('button');b.className='navBtn'+(i+1===step?' active':'');b.textContent=(i+1)+'. '+c[0];const s=document.createElement('small');s.textContent=c[1];b.append(s);b.onclick=async()=>{if(!await saveDraft())return;step=i+1;student();nav()};box.append(b)})}else{for(const cl of [...new Set(groups.map(g=>g.class_name))]){const title=document.createElement('p');title.className='eyebrow';title.textContent=cl;box.append(title);groups.filter(g=>g.class_name===cl).forEach(g=>{const b=document.createElement('button');b.className='navBtn'+(selected?.id===g.id?' active':'');b.textContent=g.name;const small=document.createElement('small');small.textContent=g.submitted_count+'/5 submitted';b.append(small);b.onclick=()=>choose(g.id);box.append(b)})}}}
 async function openGroup(id){detail=await api('/groups/'+id);if(user.role==='student')student();else review()}
@@ -38,4 +38,44 @@ el('inviteButton').onclick=()=>act(async()=>{if(!confirm('Generate a new group i
 el('newClass').onclick=()=>act(async()=>{const name=prompt('New class name:');if(!name)return;const n=prompt('Number of groups (1–50):','6');if(!n)return;await api('/classes','POST',{name,groups:Number(n)});toast('Class created');await refresh()});
 el('newGroup').onclick=()=>act(async()=>{const cl=el('classFilter').value,cls=cl==='all'?[...el('classFilter').options].find(o=>o.value!=='all')?.value:cl;if(!cls){toast('Create a class first');return}const name=prompt('New group name:','Group '+(groups.length+1));if(!name)return;await api('/groups','POST',{classId:Number(cls),name});toast('Group created');await refresh()});
 el('exportCsv').onclick=()=>act(async()=>{const r=await api('/export'),cols=['class_name','group_name','topic','approval','step','submitted','review','feedback'];const csv=[cols.join(',')].concat(r.rows.map(x=>cols.map(k=>'"'+String(x[k]??'').replaceAll('"','""')+'"').join(','))).join('\r\n');const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='ResearchLab_progress.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),500)});
+let coachReady=false;
+async function loadCoachStatus(){
+  try{
+    const status=await api('/coach/status');
+    coachReady=status.enabled===true;
+    el('coachBadge').textContent=coachReady?'Available':'Not configured';
+    el('coachAvailability').textContent=coachReady
+      ?'AI is available for limited research guidance. Only text you explicitly submit will be shared with the AI provider; do not include personal information, confidential company records, or identifiable student data.'
+      :'AI is not yet activated by the lecturer. The research questions and drafting tools above still work normally.';
+    el('askCoach').disabled=!coachReady;
+    el('coachStatus').textContent=coachReady?'Up to 12 AI questions per day per student.':'No AI questions can be sent until activated.';
+  }catch(e){
+    coachReady=false;
+    el('coachBadge').textContent='Unavailable';
+    el('coachAvailability').textContent='The AI coach is currently unavailable. You can continue your research work.';
+    el('askCoach').disabled=true;
+  }
+}
+el('askCoach').onclick=async()=>{
+  if(!coachReady)return;
+  if(!el('coachConsent').checked){toast('Please read and accept the privacy notice first.');return}
+  const question=el('coachQuestion').value.trim(),mode=el('coachMode').value;
+  if(question.length<10||question.length>1200){toast('Enter a question between 10 and 1200 characters.');return}
+  const button=el('askCoach');
+  button.disabled=true;
+  el('coachStatus').textContent='Thinking...';
+  show('coachAnswerBox',false);
+  try{
+    const r=await api('/coach/ask','POST',{question,mode,step,consent:true});
+    el('coachAnswer').textContent=r.reply;
+    show('coachAnswerBox');
+    el('coachStatus').textContent='You have '+r.remainingToday+' AI questions remaining today.';
+  }catch(e){
+    el('coachStatus').textContent='AI request failed. Your draft was not affected.';
+    toast(e.message);
+  }finally{
+    button.disabled=!coachReady;
+  }
+};
+
 boot().catch(e=>toast('Server unavailable: '+e.message));
